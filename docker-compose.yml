@@ -1,0 +1,27 @@
+# Single-server setup for the pilot (e.g. one EC2 instance in AWS Mumbai, ap-south-1).
+services:
+  bot:
+    build: .
+    env_file: .env
+    ports: ["127.0.0.1:8000:8000"]  # expose only via a TLS reverse proxy / load balancer
+    volumes:
+      - ./knowledge:/srv/knowledge:ro
+      - ./data:/srv/data
+    depends_on: [redis, postgres]
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis:/data]
+    restart: unless-stopped
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: bot  # change for anything beyond a local trial
+      POSTGRES_DB: bot
+    volumes: [pg:/var/lib/postgresql/data]
+    restart: unless-stopped
+volumes:
+  redis:
+  pg:
