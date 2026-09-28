@@ -56,7 +56,8 @@ class Settings(BaseSettings):
     # Tiers are separated by ";" and numbers within a tier by ",". Tier 1 is alerted as soon as a
     # ticket opens; each further tier after another ALERT_ESCALATE_MINUTES with nobody taking it.
     # e.g. "919000000001,919000000002;919000000010;919000000020"
-    alert_tiers: str = ""
+    alert_tiers: str = ""  # fixed last-resort tiers; the duty roster (DUTY_ROSTER_CSV / desk upload) comes first
+    duty_roster_csv: Path = Path("data/duty_roster.csv")  # loaded once as the first version if no roster uploaded yet
     alert_escalate_minutes: int = 3
     alert_reasons: str = "emergency"  # ticket reasons that page people, e.g. "emergency,clinical"
     alert_template: str = ""  # name of the Meta-approved WhatsApp template (see README)

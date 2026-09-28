@@ -1,11 +1,9 @@
 import re
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import build_app
-from app.whatsapp.client import RecordingSender
 from tests.conftest import NURSE_WA, PATIENT_WA, SAMPLES, tap, text
 
 # ------------------------------------------------------------------ bot side
@@ -62,20 +60,6 @@ async def test_logged_in_staff_without_desk_flag_is_refused(bot):
 
 
 # ------------------------------------------------------------------ dashboard (HTTP)
-
-
-@pytest.fixture
-def desk(tmp_path):
-    directory = tmp_path / "staff.csv"
-    directory.write_text(f"phone,employee_id,name,role,department,desk\n{NURSE_WA},LH1001,Test Nurse,staff,Nursing,yes\n")
-    settings = Settings(knowledge_dir=SAMPLES, database_url=f"sqlite:///{tmp_path}/desk.db",
-                        staff_directory_csv=directory, redis_url="", desk_cookie_secure=False,
-                        public_base_url="http://testserver", emergency_phone="EMERG-NUM", _env_file=None)
-    app = build_app(settings)
-    bot = app.state.bot
-    bot.sender = RecordingSender()
-    bot.router.send = bot.sender
-    return TestClient(app), bot
 
 
 async def sign_in(client, bot):

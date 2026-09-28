@@ -46,7 +46,8 @@ async def test_emergency_alerts_tier_one_immediately(paged):
     assert sent[0]["name"] == "emergency_alert"
     assert sent[0]["params"][:3] == [str(tid), "Emergency", f"+{PATIENT_WA}"]
     assert sent[0]["payload"] == f"ack:{tid}"
-    assert "Alert sent to 2 of 2 duty staff, tier 1." in [m.body for m in paged.handoffs.messages(tid)]
+    assert "Alert sent to 2 of 2 duty staff, tier 1: +91 ••••• 0001, +91 ••••• 0003." in [
+        m.body for m in paged.handoffs.messages(tid)]
 
 
 async def test_escalates_to_next_tier_when_nobody_takes_it(paged):

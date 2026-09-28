@@ -19,6 +19,7 @@ from app.his import make_his
 from app.identity import Identity, StaffDirectory
 from app.knowledge.loader import load_knowledge
 from app.knowledge.retriever import Retriever
+from app.roster import RosterStore
 from app.router import Router
 from app.store import make_store
 from app.whatsapp.client import CloudApiSender
@@ -43,13 +44,15 @@ def build_app(settings) -> FastAPI:
     audit = Audit(settings.database_url, settings.audit_hash_secret)
     handoffs = Handoffs(audit.engine)
     sender = CloudApiSender(settings.wa_access_token, settings.wa_phone_number_id, settings.wa_graph_version)
-    alerts = Alerts(settings, store, sender, handoffs)
+    roster = RosterStore(audit.engine, seed_csv=settings.duty_roster_csv)
+    alerts = Alerts(settings, store, sender, handoffs, roster=roster)
+    directory = StaffDirectory.from_csv(settings.staff_directory_csv)
     router = Router(
         settings=settings,
         store=store,
         sender=sender,
         identity=Identity(
-            StaffDirectory.from_csv(settings.staff_directory_csv), store, settings.staff_session_hours,
+            directory, store, settings.staff_session_hours,
             settings.max_login_attempts, settings.lockout_minutes,
         ),
         answerer=Answerer(Retriever(load_knowledge(settings.knowledge_dir)), LLM(settings), settings),
@@ -68,7 +71,8 @@ def build_app(settings) -> FastAPI:
 
     app = FastAPI(title="Lakeshore WhatsApp Bot", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.bot = SimpleNamespace(settings=settings, store=store, sender=sender, audit=audit,
-                                    handoffs=handoffs, router=router, alerts=alerts)
+                                    handoffs=handoffs, router=router, alerts=alerts, roster=roster,
+                                    directory=directory)
     app.include_router(build_desk_router(app.state.bot))
     app.mount("/desk/static", StaticFiles(directory=Path(__file__).parent / "desk" / "static"), name="desk-static")
     app.add_exception_handler(HTTPException, unauthorised_to_login)

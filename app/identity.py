@@ -28,6 +28,7 @@ class StaffMember:
     role: str  # STAFF or CLINICIAN
     department: str
     desk: bool = False  # may sign in to the handoff dashboard
+    roster: bool = False  # may upload the duty roster on the desk
 
 
 def normalise_phone(raw: str) -> str:
@@ -38,9 +39,10 @@ def normalise_phone(raw: str) -> str:
 
 
 class StaffDirectory:
-    """Loaded from a CSV export of the HRMS: phone,employee_id,name,role,department[,desk].
+    """Loaded from a CSV export of the HRMS: phone,employee_id,name,role,department[,desk,roster].
 
     `desk` = yes for people who work the handoff dashboard (front office, duty nurses).
+    `roster` = yes for people who may upload the duty roster (e.g. ED nurse manager).
     """
 
     def __init__(self, members: list[StaffMember]):
@@ -59,7 +61,8 @@ class StaffDirectory:
                     name=row["name"].strip(),
                     role=CLINICIAN if row["role"].strip().lower() == CLINICIAN else STAFF,
                     department=row.get("department", "").strip(),
-                    desk=(row.get("desk") or "").strip().lower() in ("yes", "y", "true", "1"),
+                    desk=_yes(row.get("desk")),
+                    roster=_yes(row.get("roster")),
                 )
                 for row in csv.DictReader(f)
             ]
@@ -67,6 +70,13 @@ class StaffDirectory:
 
     def lookup(self, wa_id: str) -> StaffMember | None:
         return self._by_phone.get(normalise_phone(wa_id))
+
+    def by_employee_id(self, employee_id: str) -> StaffMember | None:
+        return next((m for m in self._by_phone.values() if m.employee_id == employee_id), None)
+
+
+def _yes(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("yes", "y", "true", "1")
 
 
 class Identity:

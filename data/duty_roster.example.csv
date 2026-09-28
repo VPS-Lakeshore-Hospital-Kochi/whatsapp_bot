@@ -1,0 +1,5 @@
+day,start,end,tier,phone,name
+daily,08:00,20:00,1,919000000001,Sr. Nurse (day)
+daily,20:00,08:00,1,919000000002,Sr. Nurse (night)
+daily,00:00,24:00,2,919000000010,ED Consultant on call
+daily,00:00,24:00,3,919000000020,Nursing Superintendent

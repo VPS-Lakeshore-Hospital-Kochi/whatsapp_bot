@@ -84,8 +84,12 @@ directly:
 
 Set it up:
 
-- `ALERT_TIERS`: tiers separated by `;`, numbers within a tier by `,`. For example: ED duty
-  nurses; then the ED consultant on call; then the nursing superintendent.
+- **Duty roster** (recommended): who is on each tier at any time, from the ED/nursing rota.
+  See *Duty roster* below.
+- `ALERT_TIERS`: fixed last-resort numbers. Tiers are separated by `;` and numbers within a tier
+  by `,`, for example `919000000020;919000000030` for the nursing superintendent, then the
+  medical superintendent. They're alerted after the roster's tiers, or on their own if no one is
+  on the roster at that moment.
 - `ALERT_REASONS`: which ticket types page people. The default is `emergency`; add `clinical`
   to page for medical questions too.
 - `ALERT_TEMPLATE`: WhatsApp only lets a business message someone who hasn't written in the
@@ -101,14 +105,42 @@ Set it up:
   Point it at a phone-call flow (Exotel, Twilio) or the hospital's paging bridge. A WhatsApp
   message can be missed on a silent phone at 3 am; a ringing phone is much harder to miss.
 
-Duty staff should also be in the staff directory, so the desk shows their name rather than
-their number. A number that isn't in `ALERT_TIERS` can't take a ticket from an alert. Each
-alert tier is sent once per ticket, even when several app workers run, because the shared
-store guards it. The app logs an error at startup if `ALERT_TIERS` or `ALERT_TEMPLATE` is
-missing.
+Only people an alert was actually sent to, or who are on duty now, can take a ticket from an
+alert. Each alert tier is sent once per ticket, even when several app workers run, because the
+shared store guards it. If nobody at all can be alerted, the app logs an error and notes it on
+the ticket. At startup it also logs an error if there's no roster and no `ALERT_TIERS`, or no
+`ALERT_TEMPLATE`.
 
-**Tiers are fixed numbers for now.** When shifts change, update `ALERT_TIERS` and restart. A
-proper duty roster (who is on shift right now) is the natural next step.
+### Duty roster (`/desk/roster`)
+
+Alerts go to whoever is on shift when each tier is due. If a shift changes mid-escalation, the
+next tier goes to the incoming person. The roster is a CSV, usually exported from the rota
+each month:
+
+```csv
+day,start,end,tier,phone,name
+2026-10-01,08:00,20:00,1,919000000001,Sr. Nurse Anitha
+2026-10-01,20:00,08:00,1,919000000002,Sr. Nurse Meera
+mon,09:00,17:00,2,919000000010,Dr. On-call (Mondays)
+daily,00:00,24:00,3,919000000020,Nursing Superintendent
+```
+
+- `day` is a date, a weekday (`mon`–`sun`) or `daily`.
+- Times are IST. An end at or before the start means the shift ends the next morning, and
+  `24:00` means midnight.
+- Several people can share a tier and shift; they're all alerted together.
+
+**The roster page** shows:
+- who would be alerted if an emergency came in now, tier by tier
+- a warning banner for any gap in tier 1 over the next 24 hours, which also shows as a red line
+  on the queue page
+- the next 24 hours of shifts
+
+**Uploading.** People marked `roster=yes` in the staff directory can upload a new roster there.
+- Every problem is listed with its line number, and nothing changes until the file is clean.
+- Every version is kept with who uploaded it and when, and can be downloaded again.
+- On first start, `data/duty_roster.csv` is loaded if no roster has been uploaded yet
+  (`DUTY_ROSTER_CSV`).
 
 ## Project layout
 
@@ -125,6 +157,7 @@ app/
   audit.py           Audit log
   handoffs.py        Handoff tickets and their message threads
   alerts.py          Emergency alerts to duty staff, with escalation
+  roster.py          Duty roster: who is on each alert tier right now
   desk/              Handoff dashboard: routes, sign-in, templates, Lakeshore-branded CSS
 knowledge/           PUT REAL APPROVED CONTENT HERE (see knowledge/README.md)
 examples/knowledge/  Fake sample documents for development and tests
@@ -207,7 +240,9 @@ appointments, report status, departments and doctors' OP schedules. Until the ad
 - [ ] Real `EMERGENCY_PHONE`, `FRONT_DESK_PHONE`, `REPORT_PICKUP_NOTE` set
 - [ ] Desk staff marked `desk=yes` in the staff directory, a screen at the front office running
       `/desk` during OP hours, and a named owner for after hours
-- [ ] `ALERT_TIERS` agreed with the ED, `emergency_alert` template approved by Meta, and a test
+- [ ] Duty roster uploaded by the ED/nursing office with no tier-1 gaps, a named person who
+      uploads each month's roster (`roster=yes`), last-resort `ALERT_TIERS` agreed,
+      `emergency_alert` template approved by Meta, and a test
       emergency run end to end (alert → I'm on it → call back) on every shift's phones
 - [ ] Ideally `ALERT_WEBHOOK_URL` connected to a phone-call or pager flow
 - [ ] Approved documents in `knowledge/`, each with a department owner
@@ -221,12 +256,12 @@ appointments, report status, departments and doctors' OP schedules. Until the ad
 2. **Patients**: appointments, report status, directions, visiting hours.
 3. **Clinicians**: protocols and formulary.
 4. **Later**: booking and cancelling with an explicit confirmation step, outbound reminders via
-   templates, a shift-aware duty roster for alerts, and embedding search for paraphrased or Malayalam questions.
+   templates, pulling the duty roster straight from the rota system, and embedding search for paraphrased or Malayalam questions.
 
 ## Not built yet
 
 - Elider adapter (waiting on the vendor spec)
-- A duty roster for alerts: tiers are fixed numbers set in `.env`, not "whoever is on shift now"
+- Pulling the duty roster automatically from the rota/HRMS: today it's a CSV someone uploads
 - The phone-call side of alerts: the bot sends a signed webhook, and the Exotel/Twilio call flow
   that receives it has to be set up with that provider
 - Loading the staff directory from HRMS automatically (it is a CSV export for now)
