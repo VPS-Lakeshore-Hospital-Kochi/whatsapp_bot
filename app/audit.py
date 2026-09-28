@@ -28,17 +28,6 @@ audit_events = Table(
     Column("sources", Text),
 )
 
-handoffs = Table(
-    "handoffs", metadata,
-    Column("id", Integer, primary_key=True),
-    Column("ts", DateTime(timezone=True), nullable=False),
-    Column("wa_id", String(20), nullable=False),  # needed so a person can call/message back
-    Column("role", String(16), nullable=False),
-    Column("reason", String(32), nullable=False),
-    Column("summary", Text),
-    Column("status", String(16), nullable=False, default="open"),
-)
-
 
 class Audit:
     def __init__(self, database_url: str, hash_secret: str):
@@ -61,11 +50,3 @@ class Audit:
                 route=route, outcome=outcome, inbound=redact(inbound), outbound=redact(outbound),
                 sources=",".join(sources or []),
             ))
-
-    def open_handoff(self, wa_id: str, role: str, reason: str, summary: str) -> int:
-        with self.engine.begin() as conn:
-            result = conn.execute(insert(handoffs).values(
-                ts=datetime.now(timezone.utc), wa_id=wa_id, role=role, reason=reason,
-                summary=redact(summary)[:500], status="open",
-            ))
-            return int(result.inserted_primary_key[0])

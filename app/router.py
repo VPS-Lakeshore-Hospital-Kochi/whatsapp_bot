@@ -4,10 +4,11 @@ Order of checks (earliest wins):
   1. duplicate / rate limit          -> ignore
   2. emergency words (patients)      -> fixed emergency reply, no AI, plus a handoff ticket
   3. privacy consent (first contact) -> must agree before anything else
-  4. commands (menu, staff login, logout, talk to a person)
-  5. a pending step (typing employee ID, UHID, date of birth)
-  6. menu taps                        -> fixed flows backed by the HIS
-  7. free text                        -> patients: clinical questions go to a person;
+  4. a live handoff (staff have replied) -> message goes to that ticket, not the bot
+  5. commands (menu, staff login, logout, desk sign-in link, talk to a person)
+  6. a pending step (typing employee ID, UHID, date of birth)
+  7. menu taps                        -> fixed flows backed by the HIS
+  8. free text                        -> patients: clinical questions go to a person;
                                          everything else: cited answer from approved documents
 """
 
@@ -19,6 +20,8 @@ from datetime import date, datetime
 from app.answer import Answerer
 from app.audit import Audit
 from app.config import Settings
+from app.desk.auth import issue_login_token
+from app.handoffs import Handoffs
 from app.his.base import HIS
 from app.identity import CLINICIAN, PATIENT, STAFF, Identity
 from app.safety import is_clinical_question, is_emergency
@@ -31,6 +34,7 @@ log = logging.getLogger(__name__)
 _GREETING = re.compile(r"^\s*(hi|hello|hey|menu|start|namaskaram|help)\W*$", re.IGNORECASE)
 _LOGIN = re.compile(r"^\s*(staff login|login|staff)\s*$", re.IGNORECASE)
 _LOGOUT = re.compile(r"^\s*logout\s*$", re.IGNORECASE)
+_DESK = re.compile(r"^\s*desk\s*$", re.IGNORECASE)
 _HUMAN = re.compile(r"\b(agent|human|real person|talk to (a |some)?(one|person|body)|call me|call back)\b", re.IGNORECASE)
 
 PATIENT_VERIFY_SECONDS = 30 * 60
@@ -39,7 +43,7 @@ STATE_SECONDS = 15 * 60
 
 class Router:
     def __init__(self, settings: Settings, store: Store, sender: Sender, identity: Identity,
-                 answerer: Answerer, his: HIS, audit: Audit):
+                 answerer: Answerer, his: HIS, audit: Audit, handoffs: Handoffs):
         self.s = settings
         self.store = store
         self.send = sender
@@ -47,6 +51,7 @@ class Router:
         self.answerer = answerer
         self.his = his
         self.audit = audit
+        self.handoffs = handoffs
 
     # ------------------------------------------------------------------ entry point
     async def handle(self, msg: Inbound) -> None:
@@ -66,10 +71,17 @@ class Router:
             # Staff are covered by their employment terms, so login skips the patient consent screen.
             if msg.kind == "text" and _LOGIN.match(text):
                 return await self._start_login(wa, role)
+            if msg.kind == "text" and _DESK.match(text):
+                return await self._desk_link(wa, role)
             state = await self.store.get(f"state:{wa}")
             if msg.kind == "text" and state and state.get("step") == "employee_id":
                 return await self._continue_step(wa, role, state, text)
             return await self._consent(wa, msg)
+
+        if msg.kind == "text":
+            live = await asyncio.to_thread(self.handoffs.live_ticket_for, wa)
+            if live:
+                return await self._to_live_ticket(wa, role, live.id, text)
 
         if msg.kind == "unsupported":
             return await self._reply(wa, role, "unsupported", "unsupported", "",
@@ -80,6 +92,8 @@ class Router:
                 return await self._menu(wa, role)
             if _LOGIN.match(text):
                 return await self._start_login(wa, role)
+            if _DESK.match(text):
+                return await self._desk_link(wa, role)
             if _LOGOUT.match(text):
                 await self.identity.logout(wa)
                 return await self._reply(wa, role, "logout", "ok", text, "You're logged out.")
@@ -100,7 +114,7 @@ class Router:
             "I've also alerted our team to contact you."
         )
         await self.send.text(wa, body)
-        await asyncio.to_thread(self.audit.open_handoff, wa, PATIENT, "emergency", text)
+        await asyncio.to_thread(self.handoffs.open, wa, PATIENT, "emergency", text)
         await asyncio.to_thread(self.audit.log, wa, PATIENT, "emergency", "sent", text, body)
 
     async def _consent(self, wa: str, msg: Inbound) -> None:
@@ -166,6 +180,29 @@ class Router:
         if reply_id.startswith("bookreq:"):
             return await self._handoff(wa, role, "booking", f"Booking request: {reply_id[8:]}")
         return await self._menu(wa, role)
+
+    # ------------------------------------------------------------------ live handoff
+    async def _to_live_ticket(self, wa: str, role: str, ticket_id: int, text: str) -> None:
+        if _GREETING.match(text):  # "menu" hands the person back to the bot
+            await asyncio.to_thread(self.handoffs.end_live, ticket_id)
+            return await self._menu(wa, role)
+        await asyncio.to_thread(self.handoffs.add_inbound, ticket_id, text)
+        await asyncio.to_thread(self.audit.log, wa, role, "handoff_live", "forwarded", text)
+        # Acknowledge at most every 30 minutes so a back-and-forth doesn't fill up with bot notes.
+        if await self.store.set_if_absent(f"ack:{ticket_id}", 1800):
+            await self.send.text(wa, f"Passed to our team (ref #{ticket_id}). Type *menu* to go back to the assistant.")
+
+    # ------------------------------------------------------------------ desk sign-in
+    async def _desk_link(self, wa: str, role: str) -> None:
+        member = self.identity.directory.lookup(wa)
+        if role not in (STAFF, CLINICIAN) or not member or not member.desk:
+            return await self._reply(wa, role, "desk", "denied", "",
+                                     "Desk access is for authorised staff. Type *login* first, or ask IT "
+                                     "to enable desk access for your number.")
+        token = await issue_login_token(self.store, member.employee_id, member.name)
+        link = f"{self.s.public_base_url.rstrip('/')}/desk/login?token={token}"
+        await self.send.text(wa, f"Your handoff desk sign-in link (valid 5 minutes, one use):\n{link}")
+        await asyncio.to_thread(self.audit.log, wa, role, "desk", "link_sent", "", "[desk link]")
 
     # ------------------------------------------------------------------ staff login
     async def _start_login(self, wa: str, role: str) -> None:
@@ -277,7 +314,7 @@ class Router:
 
     # ------------------------------------------------------------------ helpers
     async def _handoff(self, wa: str, role: str, reason: str, text: str, lead: str = "") -> None:
-        ticket = await asyncio.to_thread(self.audit.open_handoff, wa, role, reason, text)
+        ticket = await asyncio.to_thread(self.handoffs.open, wa, role, reason, text)
         body = (f"{lead + ' ' if lead else ''}I've passed this to our team (ref #{ticket}). "
                 "Someone will contact you on this number.")
         if role == PATIENT:

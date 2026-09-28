@@ -1,12 +1,17 @@
-"""FastAPI entry point: Meta webhook verification + inbound message handling."""
+"""FastAPI entry point: Meta webhook, and the handoff dashboard under /desk."""
 
 import logging
+from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
+from fastapi.staticfiles import StaticFiles
 
 from app.answer import LLM, Answerer
 from app.audit import Audit
 from app.config import get_settings
+from app.desk.routes import build_desk_router, unauthorised_to_login
+from app.handoffs import Handoffs
 from app.his import make_his
 from app.identity import Identity, StaffDirectory
 from app.knowledge.loader import load_knowledge
@@ -20,56 +25,77 @@ from app.whatsapp.security import verify_signature
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("lakeshore-bot")
 
+DESK_HEADERS = {
+    # Patient data is on these pages: no framing, no caching, no referrer (sign-in links carry a token).
+    "Content-Security-Policy": "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; "
+                               "frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
 
-def build_router(settings) -> Router:
+
+def build_app(settings) -> FastAPI:
     store = make_store(settings.redis_url)
-    return Router(
+    audit = Audit(settings.database_url, settings.audit_hash_secret)
+    handoffs = Handoffs(audit.engine)
+    sender = CloudApiSender(settings.wa_access_token, settings.wa_phone_number_id, settings.wa_graph_version)
+    router = Router(
         settings=settings,
         store=store,
-        sender=CloudApiSender(settings.wa_access_token, settings.wa_phone_number_id, settings.wa_graph_version),
+        sender=sender,
         identity=Identity(
             StaffDirectory.from_csv(settings.staff_directory_csv), store, settings.staff_session_hours,
             settings.max_login_attempts, settings.lockout_minutes,
         ),
         answerer=Answerer(Retriever(load_knowledge(settings.knowledge_dir)), LLM(settings), settings),
         his=make_his(settings),
-        audit=Audit(settings.database_url, settings.audit_hash_secret),
+        audit=audit,
+        handoffs=handoffs,
     )
 
+    app = FastAPI(title="Lakeshore WhatsApp Bot", docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.bot = SimpleNamespace(settings=settings, store=store, sender=sender, audit=audit,
+                                    handoffs=handoffs, router=router)
+    app.include_router(build_desk_router(app.state.bot))
+    app.mount("/desk/static", StaticFiles(directory=Path(__file__).parent / "desk" / "static"), name="desk-static")
+    app.add_exception_handler(HTTPException, unauthorised_to_login)
 
-settings = get_settings()
-app = FastAPI(title="Lakeshore WhatsApp Bot", docs_url=None, redoc_url=None)
-router = build_router(settings)
+    @app.middleware("http")
+    async def desk_headers(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/desk"):
+            response.headers.update(DESK_HEADERS)
+        return response
+
+    @app.get("/health")
+    async def health():
+        return {"ok": True}
+
+    @app.get("/webhook")
+    async def verify(
+        mode: str = Query("", alias="hub.mode"),
+        token: str = Query("", alias="hub.verify_token"),
+        challenge: str = Query("", alias="hub.challenge"),
+    ):
+        if mode == "subscribe" and settings.wa_verify_token and token == settings.wa_verify_token:
+            return Response(content=challenge, media_type="text/plain")
+        raise HTTPException(status_code=403)
+
+    @app.post("/webhook")
+    async def receive(request: Request, background: BackgroundTasks):
+        raw = await request.body()
+        if not verify_signature(raw, request.headers.get("X-Hub-Signature-256"), settings.wa_app_secret):
+            raise HTTPException(status_code=401)
+        for msg in parse_webhook(await request.json()):
+            background.add_task(_safe_handle, router, settings, msg)
+        # Acknowledge immediately; Meta retries if we are slow, and the router de-duplicates.
+        return {"ok": True}
+
+    return app
 
 
-@app.get("/health")
-async def health():
-    return {"ok": True}
-
-
-@app.get("/webhook")
-async def verify(
-    mode: str = Query("", alias="hub.mode"),
-    token: str = Query("", alias="hub.verify_token"),
-    challenge: str = Query("", alias="hub.challenge"),
-):
-    if mode == "subscribe" and settings.wa_verify_token and token == settings.wa_verify_token:
-        return Response(content=challenge, media_type="text/plain")
-    raise HTTPException(status_code=403)
-
-
-@app.post("/webhook")
-async def receive(request: Request, background: BackgroundTasks):
-    raw = await request.body()
-    if not verify_signature(raw, request.headers.get("X-Hub-Signature-256"), settings.wa_app_secret):
-        raise HTTPException(status_code=401)
-    for msg in parse_webhook(await request.json()):
-        background.add_task(_safe_handle, msg)
-    # Acknowledge immediately; Meta retries if we are slow, and the router de-duplicates.
-    return {"ok": True}
-
-
-async def _safe_handle(msg):
+async def _safe_handle(router: Router, settings, msg):
     try:
         await router.handle(msg)
     except Exception:
@@ -81,3 +107,6 @@ async def _safe_handle(msg):
             )
         except Exception:
             log.exception("Failed sending error notice")
+
+
+app = build_app(get_settings())

@@ -7,6 +7,7 @@ import pytest
 from app.answer import Answerer, DraftAnswer, Verdict
 from app.audit import Audit
 from app.config import Settings
+from app.handoffs import Handoffs
 from app.his.mock import MockHIS
 from app.identity import CLINICIAN, STAFF, Identity, StaffDirectory, StaffMember
 from app.knowledge.loader import load_knowledge
@@ -65,17 +66,20 @@ def llm():
 def bot(settings, chunks, llm):
     store = MemoryStore()
     directory = StaffDirectory([
-        StaffMember(NURSE_WA, "LH1001", "Test Nurse", STAFF, "Nursing"),
+        StaffMember(NURSE_WA, "LH1001", "Test Nurse", STAFF, "Nursing", desk=True),
         StaffMember(DOCTOR_WA, "LH2002", "Dr. Test", CLINICIAN, "Cardiology"),
     ])
     sender = RecordingSender()
+    audit = Audit(settings.database_url, "test-secret")
+    handoffs = Handoffs(audit.engine)
     router = Router(
         settings=settings, store=store, sender=sender,
         identity=Identity(directory, store, 12, 3, 30),
         answerer=Answerer(Retriever(chunks), llm, settings),
-        his=MockHIS(), audit=Audit(settings.database_url, "test-secret"),
+        his=MockHIS(), audit=audit, handoffs=handoffs,
     )
-    return SimpleNamespace(router=router, sender=sender, store=store, llm=llm)
+    return SimpleNamespace(router=router, sender=sender, store=store, llm=llm, handoffs=handoffs,
+                           settings=settings, audit=audit)
 
 
 _counter = iter(range(10**9))

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{% if stats.unclaimed %}({{ stats.unclaimed }}) {% endif %}Handoff desk{% endblock %}
+{% block page %}queue{% endblock %}
+{% block main %}
+<div class="kicker">Handoff desk</div>
+
+{% if stats.emergency %}
+<div class="band" role="alert">
+  <span class="pill on-navy">Emergency</span>
+  <span>{{ stats.emergency }} emergency {{ 'ticket is' if stats.emergency == 1 else 'tickets are' }} open. Call the person now; don't reply by message first.</span>
+</div>
+{% endif %}
+
+<h1>
+  {% if view == 'resolved' %}Recently resolved tickets.
+  {% elif view == 'mine' %}Tickets you're handling.
+  {% elif stats.unclaimed == 0 %}Nobody is waiting for a person right now.
+  {% elif stats.unclaimed == 1 %}One person is waiting for someone to pick up their ticket.
+  {% else %}{{ stats.unclaimed }} people are waiting for someone to pick up their ticket.{% endif %}
+</h1>
+
+<div class="kpis" id="kpis" data-active="{{ stats.active }}" data-emergency="{{ stats.emergency }}" data-unclaimed="{{ stats.unclaimed }}">
+  <div class="kpi"><div class="n">{{ stats.unclaimed }}</div><div class="label">Waiting to be picked up</div></div>
+  <div class="kpi"><div class="n">{{ stats.emergency }}</div><div class="label">Emergencies open</div></div>
+  <div class="kpi"><div class="n">{% if stats.oldest_unclaimed_minutes is none %}–{% else %}{{ stats.oldest_unclaimed_minutes }}<small> min</small>{% endif %}</div><div class="label">Longest wait</div></div>
+  <div class="kpi"><div class="n">{{ stats.resolved_today }}</div><div class="label">Resolved today</div></div>
+</div>
+
+<div class="card">
+  {% if tickets %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Ref</th><th>Reason</th><th>From</th><th>Message</th><th>Status</th>
+      <th class="num">{{ 'Resolved' if view == 'resolved' else 'Waiting' }}</th>
+    </tr></thead>
+    <tbody>
+    {% for t in tickets %}
+      <tr class="row-link" data-href="/desk/t/{{ t.id }}">
+        <td class="ref"><a href="/desk/t/{{ t.id }}">#{{ t.id }}</a></td>
+        <td class="reason"><span class="pill {{ 'emergency' if t.reason == 'emergency' }}">{{ t.reason_label }}</span></td>
+        <td class="from"><span class="nowrap">{{ t.wa_id | masked }}</span><br><span class="caption">{{ t.role | capitalize }}</span></td>
+        <td class="preview">{{ (t.summary or '—') | truncate(120) }}</td>
+        <td class="status"><span class="dot {{ t.status }}"></span>{% if t.status == 'open' %}Waiting{% elif t.status == 'claimed' %}{{ t.assigned_to }}{% else %}Resolved{% endif %}
+          {% if t.live and t.status != 'resolved' %}<br><span class="caption">In conversation</span>{% endif %}</td>
+        <td class="num">{% if view == 'resolved' %}{{ t.resolved_at | ist }}{% else %}<span class="{{ 'late' if t.status == 'open' and (t.reason in ('emergency', 'clinical')) }}">{{ t.ts | ago }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty">{{ 'No resolved tickets yet.' if view == 'resolved' else 'Nothing here. New tickets appear automatically.' }}</div>
+  {% endif %}
+</div>
+<p class="caption below">This page checks for new tickets every 20 seconds.</p>
+{% endblock %}

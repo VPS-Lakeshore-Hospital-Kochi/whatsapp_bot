@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     elider_base_url: str = ""
     elider_api_key: str = ""
 
+    # --- Handoff dashboard (/desk) ---
+    public_base_url: str = "http://localhost:8000"  # used to build sign-in links sent on WhatsApp
+    desk_session_hours: int = 12
+    desk_cookie_secure: bool = True  # set false only for local http testing
+    desk_allowed_cidrs: str = ""  # e.g. "10.0.0.0/8,203.0.113.4/32"; empty = any network
+
     # --- Infra ---
     redis_url: str = ""  # empty = in-memory store (dev/tests only; not safe with >1 worker)
     database_url: str = "sqlite:///data/audit.db"

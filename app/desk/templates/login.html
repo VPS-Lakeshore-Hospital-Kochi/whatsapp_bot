@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block main %}
+<div class="login">
+  <div class="kicker">Handoff desk</div>
+  {% if token %}
+    <h1>Continue to the handoff desk.</h1>
+    <p class="caption">This link works once and expires 5 minutes after it was sent.</p>
+    <form method="post" action="/desk/login">
+      <input type="hidden" name="token" value="{{ token }}">
+      <button type="submit">Continue</button>
+    </form>
+  {% else %}
+    <h1>{% if expired %}That link has expired or was already used.{% else %}Sign in from WhatsApp.{% endif %}</h1>
+    <p>Message the {{ hospital }} assistant from your registered number:</p>
+    <ol>
+      <li>Type <strong>login</strong> and enter your employee ID.</li>
+      <li>Type <strong>desk</strong>. You'll get a sign-in link that works for 5 minutes.</li>
+    </ol>
+    <p class="caption">Desk access is enabled per person by IT. If <strong>desk</strong> says you're not authorised, ask them to enable it.</p>
+  {% endif %}
+</div>
+{% endblock %}

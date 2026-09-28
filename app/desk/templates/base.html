@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Handoff desk{% endblock %} · {{ hospital }}</title>
+  <link rel="stylesheet" href="/desk/static/desk.css">
+</head>
+<body data-page="{% block page %}{% endblock %}">
+  <nav class="nav">
+    <img src="/desk/static/logo-white.png" alt="{{ hospital }}">
+    <span class="product">Handoff desk</span>
+    {% if user %}
+    <div class="tabs">
+      <a href="/desk?view=active" class="{{ 'is-active' if view == 'active' }}">Waiting</a>
+      <a href="/desk?view=mine" class="{{ 'is-active' if view == 'mine' }}">Mine</a>
+      <a href="/desk?view=resolved" class="{{ 'is-active' if view == 'resolved' }}">Resolved</a>
+    </div>
+    <div class="who">
+      <span>{{ user.name }}</span>
+      <form method="post" action="/desk/logout" class="inline">
+        <input type="hidden" name="csrf" value="{{ user.csrf }}">
+        <button type="submit">Sign out</button>
+      </form>
+    </div>
+    {% endif %}
+  </nav>
+  <main>{% block main %}{% endblock %}</main>
+  <script src="/desk/static/desk.js"></script>
+</body>
+</html>
