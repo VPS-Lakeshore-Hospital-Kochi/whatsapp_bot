@@ -152,6 +152,17 @@ class Handoffs:
             conn.execute(update(handoffs).where(handoffs.c.id == ticket_id)
                          .values(live=False, updated_at=datetime.now(timezone.utc)))
 
+    def note(self, ticket_id: int, author: str, body: str) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(insert(handoff_messages).values(
+                handoff_id=ticket_id, ts=datetime.now(timezone.utc), direction="note", author=author, body=body))
+
+    def unclaimed(self, reasons: set[str]) -> list[Ticket]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(handoffs).where(and_(
+                handoffs.c.status == "open", handoffs.c.reason.in_(reasons))).order_by(handoffs.c.id)).all()
+        return [Ticket.from_row(r) for r in rows]
+
     # ---------------------------------------------------------------- desk side
     def get(self, ticket_id: int) -> Ticket | None:
         with self.engine.connect() as conn:

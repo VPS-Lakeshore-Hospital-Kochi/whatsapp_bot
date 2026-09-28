@@ -52,6 +52,20 @@ class Settings(BaseSettings):
     desk_cookie_secure: bool = True  # set false only for local http testing
     desk_allowed_cidrs: str = ""  # e.g. "10.0.0.0/8,203.0.113.4/32"; empty = any network
 
+    # --- Emergency alerts to duty staff ---
+    # Tiers are separated by ";" and numbers within a tier by ",". Tier 1 is alerted as soon as a
+    # ticket opens; each further tier after another ALERT_ESCALATE_MINUTES with nobody taking it.
+    # e.g. "919000000001,919000000002;919000000010;919000000020"
+    alert_tiers: str = ""
+    alert_escalate_minutes: int = 3
+    alert_reasons: str = "emergency"  # ticket reasons that page people, e.g. "emergency,clinical"
+    alert_template: str = ""  # name of the Meta-approved WhatsApp template (see README)
+    alert_template_lang: str = "en"
+    alert_include_preview: bool = True  # include a redacted snippet of the message in the alert
+    alert_webhook_url: str = ""  # optional: also POST each alert here (phone-call / paging bridge)
+    alert_webhook_secret: str = ""  # HMAC key for the X-Lakeshore-Signature header
+    alert_check_seconds: int = 30  # how often the escalation check runs
+
     # --- Infra ---
     redis_url: str = ""  # empty = in-memory store (dev/tests only; not safe with >1 worker)
     database_url: str = "sqlite:///data/audit.db"
