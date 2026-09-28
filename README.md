@@ -68,6 +68,48 @@ a one-time link that is valid for 5 minutes and starts a 12-hour session. Also:
 The queue view masks phone numbers. The full thread (unredacted, because staff need it to help)
 is only on the ticket page. Agree its retention period with the DPO.
 
+## Emergency alerts to duty staff
+
+The desk only helps if someone is looking at it, so emergency tickets also alert duty staff
+directly:
+
+1. **Tier 1** is alerted on WhatsApp the moment an emergency ticket opens. The alert includes
+   the ticket number, the caller's number and a short redacted snippet of their message.
+2. If nobody takes the ticket within `ALERT_ESCALATE_MINUTES` (default 3), **tier 2** is
+   alerted, then tier 3, and so on through the tiers.
+3. Tapping **I'm on it** in the alert takes the ticket in that person's name and stops the
+   escalation. They get a reply with the caller's number and the desk link. Claiming the ticket
+   on the desk stops escalation too.
+4. Every alert, and every number it couldn't reach, is noted on the ticket's timeline on the desk.
+
+Set it up:
+
+- `ALERT_TIERS`: tiers separated by `;`, numbers within a tier by `,`. For example: ED duty
+  nurses; then the ED consultant on call; then the nursing superintendent.
+- `ALERT_REASONS`: which ticket types page people. The default is `emergency`; add `clinical`
+  to page for medical questions too.
+- `ALERT_TEMPLATE`: WhatsApp only lets a business message someone who hasn't written in the
+  last 24 hours using a Meta-approved template. Submit this one (category **Utility**) in
+  WhatsApp Manager and put its name here:
+
+  > **Name:** `emergency_alert` · **Language:** English
+  > **Body:** `Lakeshore WhatsApp line: new ticket #{{1}} ({{2}}). Caller: {{3}}. Their message: {{4}}. Tap below if you are taking it, then call them now.`
+  > **Button:** quick reply, `I'm on it`
+
+- `ALERT_WEBHOOK_URL` (optional, recommended): each alert is also POSTed as JSON to this URL,
+  signed with `ALERT_WEBHOOK_SECRET` (header `X-Lakeshore-Signature: sha256=<HMAC>`).
+  Point it at a phone-call flow (Exotel, Twilio) or the hospital's paging bridge. A WhatsApp
+  message can be missed on a silent phone at 3 am; a ringing phone is much harder to miss.
+
+Duty staff should also be in the staff directory, so the desk shows their name rather than
+their number. A number that isn't in `ALERT_TIERS` can't take a ticket from an alert. Each
+alert tier is sent once per ticket, even when several app workers run, because the shared
+store guards it. The app logs an error at startup if `ALERT_TIERS` or `ALERT_TEMPLATE` is
+missing.
+
+**Tiers are fixed numbers for now.** When shifts change, update `ALERT_TIERS` and restart. A
+proper duty roster (who is on shift right now) is the natural next step.
+
 ## Project layout
 
 ```
@@ -82,6 +124,7 @@ app/
   whatsapp/          Cloud API sender, webhook parsing, signature verification
   audit.py           Audit log
   handoffs.py        Handoff tickets and their message threads
+  alerts.py          Emergency alerts to duty staff, with escalation
   desk/              Handoff dashboard: routes, sign-in, templates, Lakeshore-branded CSS
 knowledge/           PUT REAL APPROVED CONTENT HERE (see knowledge/README.md)
 examples/knowledge/  Fake sample documents for development and tests
@@ -164,6 +207,9 @@ appointments, report status, departments and doctors' OP schedules. Until the ad
 - [ ] Real `EMERGENCY_PHONE`, `FRONT_DESK_PHONE`, `REPORT_PICKUP_NOTE` set
 - [ ] Desk staff marked `desk=yes` in the staff directory, a screen at the front office running
       `/desk` during OP hours, and a named owner for after hours
+- [ ] `ALERT_TIERS` agreed with the ED, `emergency_alert` template approved by Meta, and a test
+      emergency run end to end (alert → I'm on it → call back) on every shift's phones
+- [ ] Ideally `ALERT_WEBHOOK_URL` connected to a phone-call or pager flow
 - [ ] Approved documents in `knowledge/`, each with a department owner
 - [ ] Evals: 200+ questions per audience, 100% on emergency/handoff cases, and no wrong
       answers (declining is acceptable)
@@ -175,13 +221,14 @@ appointments, report status, departments and doctors' OP schedules. Until the ad
 2. **Patients**: appointments, report status, directions, visiting hours.
 3. **Clinicians**: protocols and formulary.
 4. **Later**: booking and cancelling with an explicit confirmation step, outbound reminders via
-   templates, emergency alerts to the duty phone, and embedding search for paraphrased or Malayalam questions.
+   templates, a shift-aware duty roster for alerts, and embedding search for paraphrased or Malayalam questions.
 
 ## Not built yet
 
 - Elider adapter (waiting on the vendor spec)
-- Alerts for new tickets outside the desk page (e.g. SMS/phone to the duty nurse for emergencies);
-  today someone has to have `/desk` open
+- A duty roster for alerts: tiers are fixed numbers set in `.env`, not "whoever is on shift now"
+- The phone-call side of alerts: the bot sends a signed webhook, and the Exotel/Twilio call flow
+  that receives it has to be set up with that provider
 - Loading the staff directory from HRMS automatically (it is a CSV export for now)
 - Outbound template messages
 - Retention and purge job for audit data

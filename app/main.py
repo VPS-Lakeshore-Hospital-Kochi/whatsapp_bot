@@ -1,12 +1,15 @@
 """FastAPI entry point: Meta webhook, and the handoff dashboard under /desk."""
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
 from fastapi.staticfiles import StaticFiles
 
+from app.alerts import Alerts
 from app.answer import LLM, Answerer
 from app.audit import Audit
 from app.config import get_settings
@@ -40,6 +43,7 @@ def build_app(settings) -> FastAPI:
     audit = Audit(settings.database_url, settings.audit_hash_secret)
     handoffs = Handoffs(audit.engine)
     sender = CloudApiSender(settings.wa_access_token, settings.wa_phone_number_id, settings.wa_graph_version)
+    alerts = Alerts(settings, store, sender, handoffs)
     router = Router(
         settings=settings,
         store=store,
@@ -52,11 +56,19 @@ def build_app(settings) -> FastAPI:
         his=make_his(settings),
         audit=audit,
         handoffs=handoffs,
+        alerts=alerts,
     )
 
-    app = FastAPI(title="Lakeshore WhatsApp Bot", docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(_app):
+        # Escalation runs in the background: re-alerts the next tier while an emergency sits unclaimed.
+        task = asyncio.create_task(alerts.run_forever())
+        yield
+        task.cancel()
+
+    app = FastAPI(title="Lakeshore WhatsApp Bot", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.bot = SimpleNamespace(settings=settings, store=store, sender=sender, audit=audit,
-                                    handoffs=handoffs, router=router)
+                                    handoffs=handoffs, router=router, alerts=alerts)
     app.include_router(build_desk_router(app.state.bot))
     app.mount("/desk/static", StaticFiles(directory=Path(__file__).parent / "desk" / "static"), name="desk-static")
     app.add_exception_handler(HTTPException, unauthorised_to_login)

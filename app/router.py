@@ -2,6 +2,7 @@
 
 Order of checks (earliest wins):
   1. duplicate / rate limit          -> ignore
+     "I'm on it" on an emergency alert (duty staff) -> they take the ticket
   2. emergency words (patients)      -> fixed emergency reply, no AI, plus a handoff ticket
   3. privacy consent (first contact) -> must agree before anything else
   4. a live handoff (staff have replied) -> message goes to that ticket, not the bot
@@ -17,6 +18,7 @@ import logging
 import re
 from datetime import date, datetime
 
+from app.alerts import ACK_PREFIX, Alerts
 from app.answer import Answerer
 from app.audit import Audit
 from app.config import Settings
@@ -43,7 +45,7 @@ STATE_SECONDS = 15 * 60
 
 class Router:
     def __init__(self, settings: Settings, store: Store, sender: Sender, identity: Identity,
-                 answerer: Answerer, his: HIS, audit: Audit, handoffs: Handoffs):
+                 answerer: Answerer, his: HIS, audit: Audit, handoffs: Handoffs, alerts: Alerts | None = None):
         self.s = settings
         self.store = store
         self.send = sender
@@ -52,6 +54,7 @@ class Router:
         self.his = his
         self.audit = audit
         self.handoffs = handoffs
+        self.alerts = alerts
 
     # ------------------------------------------------------------------ entry point
     async def handle(self, msg: Inbound) -> None:
@@ -63,6 +66,9 @@ class Router:
 
         wa, text = msg.wa_id, msg.text
         role = await self.identity.role_of(wa)
+
+        if msg.kind == "reply" and msg.reply_id.startswith(ACK_PREFIX):
+            return await self._ack_alert(wa, role, msg.reply_id[len(ACK_PREFIX):])
 
         if role == PATIENT and msg.kind == "text" and is_emergency(text):
             return await self._emergency(wa, text)
@@ -114,8 +120,9 @@ class Router:
             "I've also alerted our team to contact you."
         )
         await self.send.text(wa, body)
-        await asyncio.to_thread(self.handoffs.open, wa, PATIENT, "emergency", text)
+        ticket_id = await asyncio.to_thread(self.handoffs.open, wa, PATIENT, "emergency", text)
         await asyncio.to_thread(self.audit.log, wa, PATIENT, "emergency", "sent", text, body)
+        await self._alert(ticket_id)
 
     async def _consent(self, wa: str, msg: Inbound) -> None:
         if msg.kind == "reply" and msg.reply_id == "consent_yes":
@@ -180,6 +187,40 @@ class Router:
         if reply_id.startswith("bookreq:"):
             return await self._handoff(wa, role, "booking", f"Booking request: {reply_id[8:]}")
         return await self._menu(wa, role)
+
+    # ------------------------------------------------------------------ duty-staff alerts
+    async def _alert(self, ticket_id: int) -> None:
+        if not self.alerts:
+            return
+        ticket = await asyncio.to_thread(self.handoffs.get, ticket_id)
+        try:
+            await self.alerts.check_ticket(ticket)
+        except Exception:  # never let an alert failure stop the person getting their reply
+            log.exception("Alerting for ticket #%s failed; the escalation loop will retry later tiers", ticket_id)
+
+    async def _ack_alert(self, wa: str, role: str, raw_id: str) -> None:
+        if not self.alerts or not self.alerts.is_alert_recipient(wa) or not raw_id.isdigit():
+            return await self._menu(wa, role)
+        ticket = await asyncio.to_thread(self.handoffs.get, int(raw_id))
+        if not ticket:
+            return await self._menu(wa, role)
+        member = self.identity.directory.lookup(wa)
+        name = member.name if member else f"+{wa}"
+        link = f"{self.s.public_base_url.rstrip('/')}/desk/t/{ticket.id}"
+        if ticket.status == "open":
+            await asyncio.to_thread(self.handoffs.claim, ticket.id, name)
+            await asyncio.to_thread(self.handoffs.note, ticket.id, name, f"{name} took this from the WhatsApp alert")
+            body = (f"Ticket #{ticket.id} is yours. Call them now: +{ticket.wa_id}\n"
+                    f"Details and reply: {link}")
+            outcome = "claimed"
+        elif ticket.status == "claimed":
+            body = f"Ticket #{ticket.id} was already taken by {ticket.assigned_to}. No action needed unless they ask."
+            outcome = "already_claimed"
+        else:
+            body = f"Ticket #{ticket.id} is already resolved."
+            outcome = "already_resolved"
+        await self.send.text(wa, body)
+        await asyncio.to_thread(self.audit.log, wa, role, "alert_ack", outcome, "", body, [f"handoff#{ticket.id}"])
 
     # ------------------------------------------------------------------ live handoff
     async def _to_live_ticket(self, wa: str, role: str, ticket_id: int, text: str) -> None:
@@ -315,6 +356,7 @@ class Router:
     # ------------------------------------------------------------------ helpers
     async def _handoff(self, wa: str, role: str, reason: str, text: str, lead: str = "") -> None:
         ticket = await asyncio.to_thread(self.handoffs.open, wa, role, reason, text)
+        await self._alert(ticket)
         body = (f"{lead + ' ' if lead else ''}I've passed this to our team (ref #{ticket}). "
                 "Someone will contact you on this number.")
         if role == PATIENT:

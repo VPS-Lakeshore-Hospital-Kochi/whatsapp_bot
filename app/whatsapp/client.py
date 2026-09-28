@@ -4,6 +4,8 @@ Only session messages (replies inside the 24-hour customer-service window) are s
 Bot-initiated messages (reminders, report-ready alerts) must use Meta-approved templates.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 
@@ -31,6 +33,8 @@ class Sender:
     async def text(self, to: str, body: str) -> bool: ...  # True if WhatsApp accepted it
     async def buttons(self, to: str, body: str, buttons: list[Button]) -> None: ...
     async def list(self, to: str, body: str, button_label: str, rows: list[ListRow]) -> None: ...
+    async def template(self, to: str, name: str, lang: str, params: list[str],
+                       button_payload: str = "") -> bool: ...  # True if WhatsApp accepted it
 
 
 class CloudApiSender(Sender):
@@ -58,6 +62,15 @@ class CloudApiSender(Sender):
 
     async def text(self, to: str, body: str) -> bool:
         return await self._send(to, {"type": "text", "text": {"body": body[:4096], "preview_url": False}})
+
+    async def template(self, to: str, name: str, lang: str, params: list[str], button_payload: str = "") -> bool:
+        """A Meta-approved template: the only way to message someone who hasn't written in 24 hours."""
+        components = [{"type": "body", "parameters": [{"type": "text", "text": p[:1000]} for p in params]}]
+        if button_payload:
+            components.append({"type": "button", "sub_type": "quick_reply", "index": "0",
+                               "parameters": [{"type": "payload", "payload": button_payload}]})
+        return await self._send(to, {"type": "template", "template": {
+            "name": name, "language": {"code": lang}, "components": components}})
 
     async def buttons(self, to: str, body: str, buttons: list[Button]) -> None:
         await self._send(to, {
@@ -108,6 +121,14 @@ class RecordingSender(Sender):
 
     async def list(self, to, body, button_label, rows):
         self.sent.append({"to": to, "type": "list", "body": body, "ids": [r.id for r in rows]})
+
+    fail_numbers: set = field(default_factory=set)  # tests: template sends to these numbers fail
+
+    async def template(self, to, name, lang, params, button_payload=""):
+        if to in self.fail_numbers:
+            return False
+        self.sent.append({"to": to, "type": "template", "name": name, "params": params, "payload": button_payload})
+        return True
 
     def last_body(self) -> str:
         return self.sent[-1]["body"] if self.sent else ""
