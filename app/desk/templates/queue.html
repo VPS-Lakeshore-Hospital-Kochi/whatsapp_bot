@@ -26,10 +26,18 @@
   <div class="kpi"><div class="n">{{ stats.resolved_today }}</div><div class="label">Resolved today</div></div>
 </div>
 
+<p class="duty">
+  {% if duty.first %}<span><span class="caption">First alerted if an emergency comes in now:</span>
+    <strong>{{ duty.first | map(attribute='name') | join(', ') }}</strong>.</span>
+  {% else %}<span class="late">Nobody is on duty for emergency alerts right now.</span>{% endif %}
+  {% if duty.gap %}<span class="late">Roster gap from {{ duty.gap[0] | ist("%a %I:%M %p") }}.</span>{% endif %}
+  <a href="/desk/roster">Duty roster</a>
+</p>
+
 <div class="card">
   {% if tickets %}
   <div class="table-wrap">
-  <table>
+  <table class="queue">
     <thead><tr>
       <th>Ref</th><th>Reason</th><th>From</th><th>Message</th><th>Status</th>
       <th class="num">{{ 'Resolved' if view == 'resolved' else 'Waiting' }}</th>

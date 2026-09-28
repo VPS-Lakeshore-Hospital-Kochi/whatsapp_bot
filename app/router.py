@@ -199,7 +199,7 @@ class Router:
             log.exception("Alerting for ticket #%s failed; the escalation loop will retry later tiers", ticket_id)
 
     async def _ack_alert(self, wa: str, role: str, raw_id: str) -> None:
-        if not self.alerts or not self.alerts.is_alert_recipient(wa) or not raw_id.isdigit():
+        if not self.alerts or not raw_id.isdigit() or not await self.alerts.can_ack(wa, int(raw_id)):
             return await self._menu(wa, role)
         ticket = await asyncio.to_thread(self.handoffs.get, int(raw_id))
         if not ticket:

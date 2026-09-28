@@ -6,21 +6,23 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from app.desk.auth import COOKIE, DeskUser, end_session, network_allowed, redeem_login_token, session_user
 from app.handoffs import IST_OFFSET, Ticket
+from app.roster import RosterError
 
 log = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 MAX_REPLY = 1000
+MAX_ROSTER_BYTES = 256 * 1024
 
 
 def _ist(dt: datetime | None, fmt: str = "%d %b, %I:%M %p") -> str:
-    return (dt + IST_OFFSET).strftime(fmt) if dt else ""
+    return dt.astimezone(timezone(IST_OFFSET)).strftime(fmt) if dt else ""
 
 
 def _ago(dt: datetime | None) -> str:
@@ -112,7 +114,7 @@ def build_desk_router(app_state) -> APIRouter:
             asyncio.to_thread(app_state.handoffs.queue, view, user.name),
             asyncio.to_thread(app_state.handoffs.stats),
         )
-        return page(request, "queue.html", user, tickets=tickets, stats=stats, view=view)
+        return page(request, "queue.html", user, tickets=tickets, stats=stats, view=view, duty=_duty_summary(app_state))
 
     @r.get("/api/summary")
     async def summary(user: DeskUser = Depends(current_user)):
@@ -169,7 +171,64 @@ def build_desk_router(app_state) -> APIRouter:
             _audit(app_state, t, "reopen", user)
         return back_to(ticket_id)
 
+    # ------------------------------------------------------------ duty roster
+    def roster_admin(user: DeskUser) -> bool:
+        member = app_state.directory.by_employee_id(user.employee_id)
+        return bool(member and member.roster)
+
+    def roster_page(request: Request, user: DeskUser, **ctx) -> HTMLResponse:
+        now = datetime.now(timezone.utc)
+        roster = app_state.roster.current()
+        return page(request, "roster.html", user, view="roster", now=now,
+                    tiers=app_state.alerts.tiers_at(now),
+                    gaps=roster.gaps(now, 24, tier=1) if roster else [],
+                    upcoming=roster.upcoming(now, 24) if roster else [],
+                    version=app_state.roster.latest(), has_roster=roster is not None,
+                    can_upload=roster_admin(user), escalate=s.alert_escalate_minutes, **ctx)
+
+    @r.get("/roster")
+    async def roster(request: Request, done: str = "", user: DeskUser = Depends(current_user)):
+        return roster_page(request, user, done=done)
+
+    @r.get("/roster.csv")
+    async def roster_csv(user: DeskUser = Depends(current_user)):
+        version = app_state.roster.latest()
+        if not version:
+            raise HTTPException(status_code=404)
+        return Response(version.content, media_type="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="duty-roster-v{version.id}.csv"',
+            "Cache-Control": "no-store"})
+
+    @r.post("/roster")
+    async def upload_roster(request: Request, file: UploadFile = File(...), csrf: str = Form(""),
+                            user: DeskUser = Depends(current_user)):
+        check_csrf(user, csrf)
+        if not roster_admin(user):
+            raise HTTPException(status_code=403)
+        raw = await file.read(MAX_ROSTER_BYTES + 1)
+        if len(raw) > MAX_ROSTER_BYTES:
+            return roster_page(request, user, problems=["The file is too big (limit 256 KB)."])
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return roster_page(request, user, problems=["Save the file as CSV (UTF-8) and try again."])
+        try:
+            version = await asyncio.to_thread(app_state.roster.upload, text, f"{user.name} ({user.employee_id})")
+        except RosterError as e:
+            return roster_page(request, user, problems=e.problems[:30])
+        app_state.audit.log("desk", "staff", "roster", f"upload:{user.employee_id}", "", "",
+                            [f"roster#{version.id}"])
+        return RedirectResponse("/desk/roster?done=uploaded", status_code=303)
+
     return r
+
+
+def _duty_summary(app_state) -> dict:
+    now = datetime.now(timezone.utc)
+    tiers = app_state.alerts.tiers_at(now)
+    roster = app_state.roster.current()
+    gaps = roster.gaps(now, 24, tier=1) if roster else []
+    return {"first": tiers[0] if tiers else [], "gap": gaps[0] if gaps else None, "has_roster": roster is not None}
 
 
 def _audit(app_state, t: Ticket, action: str, user: DeskUser, body: str = "") -> None:

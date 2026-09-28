@@ -111,14 +111,28 @@ form.stack > button { align-self: flex-start; }
 
 /* phones: each ticket becomes a stacked block instead of a sideways-scrolling table */
 @media (max-width: 760px) {
-  table, tbody, tr, td { display: block; width: 100%; }
-  thead { display: none; }
-  tr.row-link { display: grid; grid-template-columns: auto 1fr auto; column-gap: 12px; row-gap: 6px; padding: 16px; border-bottom: 1px solid var(--rule); }
-  tr.row-link:last-child { border-bottom: 0; }
-  tr.row-link td { padding: 0; border: 0; }
+  table.queue, table.queue tbody, table.queue tr, table.queue td { display: block; width: 100%; }
+  table.queue thead { display: none; }
+  table.queue tr.row-link { display: grid; grid-template-columns: auto 1fr auto; column-gap: 12px; row-gap: 6px; padding: 16px; border-bottom: 1px solid var(--rule); }
+  table.queue tr.row-link:last-child { border-bottom: 0; }
+  table.queue tr.row-link td { padding: 0; border: 0; }
   td.ref { grid-column: 1; }
   td.reason { grid-column: 2; }
   td.num { grid-column: 3; grid-row: 1; }
   td.from, td.preview, td.status { grid-column: 1 / -1; max-width: none; }
   .btn.white { margin-left: 0; }
+}
+
+/* roster */
+.duty { margin: -8px 0 20px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.problems { margin-bottom: 24px; }
+.problems ul { margin: 0; padding-left: 20px; color: var(--danger); }
+pre { background: var(--grey-100); border-radius: 12px; padding: 12px; overflow-x: auto; font-size: 12px; }
+tr.is-now td { background: var(--cream); }
+details summary { cursor: pointer; }
+input[type=file] { font: inherit; }
+.block { display: block; }
+dt { white-space: nowrap; }
+@media (max-width: 760px) {
+  table.compact th, table.compact td { padding: 10px 8px; font-size: 13px; }
 }

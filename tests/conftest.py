@@ -3,12 +3,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.answer import Answerer, DraftAnswer, Verdict
 from app.audit import Audit
 from app.config import Settings
 from app.handoffs import Handoffs
 from app.his.mock import MockHIS
+from app.main import build_app
 from app.identity import CLINICIAN, STAFF, Identity, StaffDirectory, StaffMember
 from app.knowledge.loader import load_knowledge
 from app.knowledge.retriever import Retriever
@@ -91,6 +93,21 @@ def text(wa, body):
 
 def tap(wa, reply_id):
     return Inbound(message_id=f"m{next(_counter)}", wa_id=wa, kind="reply", reply_id=reply_id)
+
+
+@pytest.fixture
+def desk(tmp_path):
+    directory = tmp_path / "staff.csv"
+    directory.write_text(f"phone,employee_id,name,role,department,desk\n{NURSE_WA},LH1001,Test Nurse,staff,Nursing,yes\n")
+    settings = Settings(knowledge_dir=SAMPLES, database_url=f"sqlite:///{tmp_path}/desk.db",
+                        staff_directory_csv=directory, redis_url="", desk_cookie_secure=False,
+                        public_base_url="http://testserver", emergency_phone="EMERG-NUM", _env_file=None)
+    app = build_app(settings)
+    bot = app.state.bot
+    bot.sender = RecordingSender()
+    bot.router.send = bot.sender
+    return TestClient(app), bot
+
 
 
 __all__ = ["DraftAnswer", "Verdict", "text", "tap", "PATIENT_WA", "NURSE_WA", "DOCTOR_WA"]

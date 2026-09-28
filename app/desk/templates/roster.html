@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Duty roster{% endblock %}
+{% block main %}
+<div class="kicker">Duty roster</div>
+
+{% if gaps %}
+<div class="band" role="alert">
+  <span class="pill on-navy">Gap</span>
+  <span>Nobody is on tier 1 {% for g in gaps[:3] %}from {{ g[0] | ist("%a %I:%M %p") }} to {{ g[1] | ist("%a %I:%M %p") }}{{ "; " if not loop.last }}{% endfor %}{% if gaps | length > 3 %} and {{ gaps | length - 3 }} more{% endif %}. Emergencies then go to tier 2 first.</span>
+</div>
+{% endif %}
+
+<h1>{% if tiers %}{{ tiers[0] | map(attribute='name') | join(', ') }} {{ 'is' if tiers[0] | length == 1 else 'are' }} alerted first if an emergency comes in now.{% else %}Nobody would be alerted if an emergency came in now.{% endif %}</h1>
+
+{% if done == 'uploaded' %}<p class="flash">Roster uploaded. Alerts use it from now on.</p>{% endif %}
+{% if problems %}
+<div class="card pad problems">
+  <h2>The roster wasn't uploaded. Fix these and try again:</h2>
+  <ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<div class="split">
+  <div class="card pad">
+    <h2>On duty now</h2>
+    {% if tiers %}
+    <dl>
+      {% for people in tiers %}
+      <div><dt>Tier {{ loop.index }}<span class="caption block">{% if loop.index > 1 %}after {{ (loop.index - 1) * escalate }} min{% else %}first{% endif %}</span></dt>
+        <dd>{% for p in people %}{{ p.name }} <a class="caption" href="tel:+{{ p.phone }}">+{{ p.phone }}</a>{% if not loop.last %}<br>{% endif %}{% endfor %}</dd></div>
+      {% endfor %}
+    </dl>
+    {% else %}
+    <p class="late">Nobody. Upload a roster or set ALERT_TIERS.</p>
+    {% endif %}
+    <p class="caption below">Numbers set in ALERT_TIERS are added after the roster as a last resort.</p>
+
+    <h2 class="below">Current roster</h2>
+    {% if version %}
+      <p class="caption">Version {{ version.id }}, {{ version.rows }} shifts, uploaded {{ version.ts | ist }} by {{ version.uploaded_by }}.</p>
+      <a class="btn outline" href="/desk/roster.csv">Download CSV</a>
+    {% else %}
+      <p class="caption">No roster uploaded yet.</p>
+    {% endif %}
+
+    {% if can_upload %}
+    <form method="post" action="/desk/roster" enctype="multipart/form-data" class="stack below">
+      <input type="hidden" name="csrf" value="{{ user.csrf }}">
+      <label class="caption" for="file">Upload a new roster (CSV). It replaces the current one; old versions are kept.</label>
+      <input type="file" id="file" name="file" accept=".csv,text/csv" required>
+      <button type="submit">Upload roster</button>
+    </form>
+    <details class="below caption">
+      <summary>CSV format</summary>
+      <pre>day,start,end,tier,phone,name
+2026-10-01,08:00,20:00,1,919000000001,Sr. Nurse A
+2026-10-01,20:00,08:00,1,919000000002,Sr. Nurse B
+mon,09:00,17:00,2,919000000010,Dr. On-call
+daily,00:00,24:00,3,919000000020,Nursing Supt.</pre>
+      <p><code>day</code> is a date, a weekday (mon–sun) or <code>daily</code>. Times are IST. An end at or before the start means the next morning.</p>
+    </details>
+    {% else %}
+    <p class="caption below">Only roster managers can upload a new roster. Ask IT if you need access.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    {% if upcoming %}
+    <div class="table-wrap">
+    <table class="compact">
+      <thead><tr><th>Next 24 hours</th><th>Until</th><th class="num">Tier</th><th>Who</th></tr></thead>
+      <tbody>
+      {% for start, end, s in upcoming %}
+        <tr class="{{ 'is-now' if start <= now and now < end }}">
+          <td>{{ start | ist("%a %I:%M %p") }}</td>
+          <td>{{ end | ist("%a %I:%M %p") }}</td>
+          <td class="num">{{ s.tier }}</td>
+          <td>{{ s.name }}{% if start <= now and now < end %} <span class="caption">on now</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty">{{ 'No shifts in the next 24 hours.' if has_roster else 'Upload a roster to see upcoming shifts.' }}</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
