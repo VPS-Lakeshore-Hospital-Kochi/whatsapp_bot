@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}#{{ t.id }} {{ t.reason_label }}{% endblock %}
+{% block page %}ticket{% endblock %}
+{% block main %}
+<div class="kicker">Ticket #{{ t.id }}</div>
+
+{% if t.reason == 'emergency' and t.status != 'resolved' %}
+<div class="band" role="alert">
+  <span class="pill on-navy">Emergency</span>
+  <span>Call them now. The bot has already sent them the emergency number.</span>
+  <a class="btn white" href="tel:+{{ t.wa_id }}">Call +{{ t.wa_id }}</a>
+</div>
+{% endif %}
+
+<h1>{{ t.reason_label }}, opened {{ t.ts | ago_phrase }}.</h1>
+
+<div class="split">
+  <div class="card pad">
+    <dl>
+      <div><dt>Phone</dt><dd><a href="tel:+{{ t.wa_id }}">+{{ t.wa_id }}</a></dd></div>
+      <div><dt>Who</dt><dd>{{ t.role | capitalize }}</dd></div>
+      <div><dt>Opened</dt><dd>{{ t.ts | ist }}</dd></div>
+      <div><dt>Status</dt><dd><span class="dot {{ t.status }}"></span>{{ {'open': 'Waiting', 'claimed': 'Claimed', 'resolved': 'Resolved'}[t.status] }}</dd></div>
+      {% if t.assigned_to %}<div><dt>Handled by</dt><dd>{{ t.assigned_to }}</dd></div>{% endif %}
+      {% if t.resolution_note %}<div><dt>Resolution</dt><dd>{{ t.resolution_note }}</dd></div>{% endif %}
+    </dl>
+
+    <div class="actions">
+      {% if t.status == 'open' %}
+      <form method="post" action="/desk/t/{{ t.id }}/claim">
+        <input type="hidden" name="csrf" value="{{ user.csrf }}">
+        <button type="submit">I'll handle this</button>
+      </form>
+      {% endif %}
+      {% if t.status != 'resolved' %}
+      <form method="post" action="/desk/t/{{ t.id }}/resolve" class="stack">
+        <input type="hidden" name="csrf" value="{{ user.csrf }}">
+        <label class="caption" for="note">Resolution note (for the record, not sent to the person)</label>
+        <input type="text" id="note" name="note" maxlength="500" placeholder="e.g. Called back, booked OP for Monday">
+        <button type="submit" class="outline">Mark resolved</button>
+      </form>
+      {% else %}
+      <form method="post" action="/desk/t/{{ t.id }}/reopen">
+        <input type="hidden" name="csrf" value="{{ user.csrf }}">
+        <button type="submit" class="outline">Reopen</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="thread">
+      {% for m in messages %}
+        {% if m.direction == 'note' %}
+          <div class="msg note">{{ m.body }} · {{ m.ts | ist }}</div>
+        {% else %}
+          <div class="msg {{ m.direction }}">{{ m.body }}<span class="meta">{{ m.author or 'Them' }} · {{ m.ts | ist }}</span></div>
+        {% endif %}
+      {% else %}
+        <p class="caption">They didn't write anything; they tapped “Talk to a person”.</p>
+      {% endfor %}
+    </div>
+    <div class="composer">
+      {% if t.status == 'resolved' %}
+        <div class="notice">This ticket is resolved. Reopen it to reply.</div>
+      {% elif can_reply %}
+        <form method="post" action="/desk/t/{{ t.id }}/reply" class="stack">
+          <input type="hidden" name="csrf" value="{{ user.csrf }}">
+          <textarea name="body" rows="3" maxlength="{{ max_reply }}" required placeholder="Reply on WhatsApp as {{ hospital }}…"></textarea>
+          <div class="row">
+            <span class="caption">Sent from the hospital's number. Their replies will come to this ticket until it's resolved.</span>
+            {% if done == 'sent' %}<span class="flash">Sent.</span>{% elif done == 'failed' %}<span class="late">Not sent: WhatsApp didn't accept it. Try again or call them.</span>{% endif %}
+            <button type="submit">Send on WhatsApp</button>
+          </div>
+        </form>
+      {% else %}
+        <div class="notice">It's been more than 24 hours since their last message, so WhatsApp won't deliver a typed reply. Call them on <a href="tel:+{{ t.wa_id }}">+{{ t.wa_id }}</a>.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -28,7 +28,7 @@ class ListRow:
 class Sender:
     """Interface the router talks to. Tests use RecordingSender."""
 
-    async def text(self, to: str, body: str) -> None: ...
+    async def text(self, to: str, body: str) -> bool: ...  # True if WhatsApp accepted it
     async def buttons(self, to: str, body: str, buttons: list[Button]) -> None: ...
     async def list(self, to: str, body: str, button_label: str, rows: list[ListRow]) -> None: ...
 
@@ -41,17 +41,23 @@ class CloudApiSender(Sender):
             timeout=10, headers={"Authorization": f"Bearer {access_token}"}
         )
 
-    async def _send(self, to: str, payload: dict) -> None:
+    async def _send(self, to: str, payload: dict) -> bool:
         body = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": to, **payload}
         if self._dry_run:
             log.info("DRY-RUN outbound: %s", body)
-            return
-        resp = await self._http.post(self._url, json=body)
+            return True
+        try:
+            resp = await self._http.post(self._url, json=body)
+        except httpx.HTTPError as e:
+            log.error("WhatsApp send failed: %s", e)
+            return False
         if resp.status_code >= 400:
             log.error("WhatsApp send failed %s: %s", resp.status_code, resp.text)
+            return False
+        return True
 
-    async def text(self, to: str, body: str) -> None:
-        await self._send(to, {"type": "text", "text": {"body": body[:4096], "preview_url": False}})
+    async def text(self, to: str, body: str) -> bool:
+        return await self._send(to, {"type": "text", "text": {"body": body[:4096], "preview_url": False}})
 
     async def buttons(self, to: str, body: str, buttons: list[Button]) -> None:
         await self._send(to, {
@@ -88,8 +94,14 @@ class RecordingSender(Sender):
 
     sent: list[dict] = field(default_factory=list)
 
+    fail_next: bool = False  # tests: simulate WhatsApp rejecting the next text
+
     async def text(self, to, body):
+        if self.fail_next:
+            self.fail_next = False
+            return False
         self.sent.append({"to": to, "type": "text", "body": body})
+        return True
 
     async def buttons(self, to, body, buttons):
         self.sent.append({"to": to, "type": "buttons", "body": body, "ids": [b.id for b in buttons]})

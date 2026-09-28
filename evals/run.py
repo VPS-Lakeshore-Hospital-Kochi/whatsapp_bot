@@ -15,6 +15,7 @@ import yaml
 from app.answer import LLM, Answerer
 from app.audit import Audit
 from app.config import get_settings
+from app.handoffs import Handoffs
 from app.his.mock import MockHIS
 from app.identity import Identity, StaffDirectory
 from app.knowledge.loader import load_knowledge
@@ -49,8 +50,9 @@ async def main(knowledge: Path, cases_file: Path) -> int:
             await store.set(f"consent:{wa}", "eval")
             if case["role"] != "patient":
                 await store.set(f"auth:{wa}", case["role"])
+            audit = Audit(f"sqlite:///{tmp}/eval.db", "eval")
             router = Router(settings, store, sender, Identity(StaffDirectory([]), store, 1, 3, 1),
-                            answerer, MockHIS(), Audit(f"sqlite:///{tmp}/eval.db", "eval"))
+                            answerer, MockHIS(), audit, Handoffs(audit.engine))
             await router.handle(Inbound(message_id=f"e{i}", wa_id=wa, kind="text", text=case["question"]))
             body = sender.last_body()
             got = classify(body, settings.emergency_phone)

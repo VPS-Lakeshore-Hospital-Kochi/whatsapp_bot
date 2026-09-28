@@ -36,6 +36,38 @@ birth** every 30 minutes, since families often share one phone.
 
 Everything is written to an audit table, with phone numbers hashed and identifiers redacted.
 
+## Handoff desk (`/desk`)
+
+Everything the bot passes to a person lands on the handoff desk: emergencies, medical
+questions, booking requests, "talk to a person", and questions it won't guess at.
+
+- **Queue:** emergencies first, then medical questions, then the rest, with unclaimed and oldest
+  first within each group. Tiles show how many people are waiting, open emergencies, the longest
+  wait and how many tickets were resolved today. The page refreshes itself when something changes.
+- **Ticket:** the person's full message thread, their number (tap to call), and actions:
+  *I'll handle this*, reply on WhatsApp, *Mark resolved* (with a note), *Reopen*.
+- **Conversation:** once staff reply, the person's next messages go into the ticket instead of to
+  the bot, until the ticket is resolved or they type *menu*. Emergency words are still caught first.
+- **WhatsApp's 24-hour rule:** typed replies only work within 24 hours of the person's last
+  message. After that the desk shows a call prompt instead of the reply box.
+
+**Signing in.** There are no passwords. Mark desk staff with `desk=yes` in the staff directory
+CSV. They message the bot `login`, enter their employee ID, then type `desk`. The bot replies with
+a one-time link that is valid for 5 minutes and starts a 12-hour session. Also:
+- Set `PUBLIC_BASE_URL` to the bot's https address.
+- Optionally set `DESK_ALLOWED_CIDRS` to the hospital's office IP ranges, so the desk only opens
+  from inside the hospital.
+
+**Security.**
+- Sessions are held server-side, with an HttpOnly, Secure, SameSite=Strict cookie.
+- Every action needs a CSRF token.
+- Pages send a strict Content-Security-Policy and aren't cached. Patient text is always
+  HTML-escaped.
+- Every desk action is written to the audit log with the employee ID.
+
+The queue view masks phone numbers. The full thread (unredacted, because staff need it to help)
+is only on the ticket page. Agree its retention period with the DPO.
+
 ## Project layout
 
 ```
@@ -48,7 +80,9 @@ app/
   knowledge/         Document loader (owner, audience, expiry) and BM25 search
   his/               Hospital system interface: mock data now, Elider adapter stub
   whatsapp/          Cloud API sender, webhook parsing, signature verification
-  audit.py           Audit log and handoff tickets
+  audit.py           Audit log
+  handoffs.py        Handoff tickets and their message threads
+  desk/              Handoff dashboard: routes, sign-in, templates, Lakeshore-branded CSS
 knowledge/           PUT REAL APPROVED CONTENT HERE (see knowledge/README.md)
 examples/knowledge/  Fake sample documents for development and tests
 evals/               Release-gate question set and runner
@@ -60,7 +94,7 @@ tests/               Unit and flow tests (no network, no API key needed)
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                                   # 38 tests, no keys needed
+pytest                                   # no keys needed
 
 cp .env.example .env                     # leave WA_ACCESS_TOKEN empty = dry run
 export KNOWLEDGE_DIR=examples/knowledge REDIS_URL= DATABASE_URL=sqlite:///data/audit.db
@@ -128,7 +162,8 @@ appointments, report status, departments and doctors' OP schedules. Until the ad
 - [ ] ED/Quality review of the emergency and clinical word lists in `app/safety.py`,
       including Malayalam and Manglish phrasing
 - [ ] Real `EMERGENCY_PHONE`, `FRONT_DESK_PHONE`, `REPORT_PICKUP_NOTE` set
-- [ ] A team and a screen that works the `handoffs` table during OP hours, and a named owner for after hours
+- [ ] Desk staff marked `desk=yes` in the staff directory, a screen at the front office running
+      `/desk` during OP hours, and a named owner for after hours
 - [ ] Approved documents in `knowledge/`, each with a department owner
 - [ ] Evals: 200+ questions per audience, 100% on emergency/handoff cases, and no wrong
       answers (declining is acceptable)
@@ -140,12 +175,13 @@ appointments, report status, departments and doctors' OP schedules. Until the ad
 2. **Patients**: appointments, report status, directions, visiting hours.
 3. **Clinicians**: protocols and formulary.
 4. **Later**: booking and cancelling with an explicit confirmation step, outbound reminders via
-   templates, a staff dashboard for handoffs, and embedding search for paraphrased or Malayalam questions.
+   templates, emergency alerts to the duty phone, and embedding search for paraphrased or Malayalam questions.
 
 ## Not built yet
 
 - Elider adapter (waiting on the vendor spec)
-- Handoff dashboard: tickets are written to the `handoffs` table, and nobody is notified yet
+- Alerts for new tickets outside the desk page (e.g. SMS/phone to the duty nurse for emergencies);
+  today someone has to have `/desk` open
 - Loading the staff directory from HRMS automatically (it is a CSV export for now)
 - Outbound template messages
 - Retention and purge job for audit data
